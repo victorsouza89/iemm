@@ -53,8 +53,8 @@ class Loss:
     def mistakeness(masses, present_metacluster_idxs, missing_metacluster_idxs, powered_jaccard_matrix):
         powered_jaccard_matrix_ = powered_jaccard_matrix[missing_metacluster_idxs, :][:, present_metacluster_idxs]
         mistakeness_per_element = np.matmul(masses[:, missing_metacluster_idxs], 1-powered_jaccard_matrix_)
-        mistakeness_per_element = np.sum(mistakeness_per_element, axis=1)
-        return np.mean(mistakeness_per_element)
+        mistakeness = np.sum(mistakeness_per_element, axis=1)
+        return np.mean(mistakeness)
 
 class XEDT(BaseEstimator, ClassifierMixin):
     def __init__(self, 
@@ -141,7 +141,7 @@ class XEDT(BaseEstimator, ClassifierMixin):
         self.mistakeness = self.precompute_mistakeness()
 
         # Construction of the tree
-        self.root_node = TreeNode()
+        self.root_node = TreeNode(contained_clusters=np.max(self.F[1:,:], axis=0))
         self._build_tree(X_indices, self.root_node, metaclusters_idxs = range(len(self.F)-1))
 
         # The model is now fitted
@@ -150,7 +150,6 @@ class XEDT(BaseEstimator, ClassifierMixin):
         return self
 
     def _build_tree(self, indices, root_node, metaclusters_idxs):
-        # Node impurity
         root_node.impurity_value = self.incoherenceness(indices)
         
         # Node depth
@@ -169,19 +168,23 @@ class XEDT(BaseEstimator, ClassifierMixin):
 
         if len(metaclusters_idxs) < 2:
             attribute = None
+            if len(metaclusters_idxs) == 1:
+                root_node.attributed_metacluster = metaclusters_idxs[0]
 
         if attribute != None: 
                 # Left node
                 left_condition = lambda x: np.where(x[:,attribute].astype(float) < threshold)[0]
                 left_metaclusters_idx = list(set(left_condition(self.metacluster_centroids)) & set(metaclusters_idxs))
-                node = TreeNode(attribute=attribute, attribute_value=threshold, continuous_attribute=1, node_depth=node_depth)
+                contained_clusters = np.max(self.F[1:,:][left_metaclusters_idx], axis=0)
+                node = TreeNode(attribute=attribute, attribute_value=threshold, continuous_attribute=1, node_depth=node_depth, contained_clusters=contained_clusters)
                 self._build_tree(indices[left_condition(self.X_train[indices])], node, metaclusters_idxs=left_metaclusters_idx)
                 root_node.leafs.append(node) 
                 
                 # Right node
                 right_condition = lambda x: np.where(x[:,attribute].astype(float) >= threshold)[0]
                 right_metaclusters_idx = list(set(right_condition(self.metacluster_centroids)) & set(metaclusters_idxs))
-                node = TreeNode(attribute=attribute, attribute_value=threshold, continuous_attribute=2, node_depth=node_depth)
+                contained_clusters = np.max(self.F[1:,:][right_metaclusters_idx], axis=0)
+                node = TreeNode(attribute=attribute, attribute_value=threshold, continuous_attribute=2, node_depth=node_depth, contained_clusters=contained_clusters)
                 self._build_tree(indices[right_condition(self.X_train[indices])], node, metaclusters_idxs=right_metaclusters_idx)
                 root_node.leafs.append(node)
         else:
@@ -347,12 +350,13 @@ class XEDT(BaseEstimator, ClassifierMixin):
     def plot_tree(self,
                   feature_names=None,
                   class_names=None,
+                  cluster_names=None,
                   focal_colors=None,
                   position=(0, 0),
                   x_spacing=4,
                   y_spacing=3,
                   box_width=10,
-                  box_height=1.5,
+                  box_height=2,
                   box_scale=1,
                   box_reduction=0.75,
                   x_scale=1,
@@ -367,6 +371,7 @@ class XEDT(BaseEstimator, ClassifierMixin):
         return self.root_node.plot_tree(
             feature_names=feature_names,
             class_names=class_names,
+            cluster_names=cluster_names,
             focal_colors=focal_colors,
             position=position,
             x_spacing=x_spacing,
@@ -381,6 +386,11 @@ class XEDT(BaseEstimator, ClassifierMixin):
             arrow_label=arrow_label,
             add_legend=add_legend
         )
+    
+
+    def get_path(self, feature_names=None, cluster_names=None):
+        feature_labels = (lambda x: feature_names[x]) if feature_names else (lambda x: f"Feat{x}")
+        return self.root_node.get_path(feature_labels=feature_labels, cluster_names=cluster_names)
 
 class TreeNode():
     def __init__(self, 
@@ -389,7 +399,8 @@ class TreeNode():
                  attribute_value = 0, 
                  continuous_attribute = 0, 
                  number_leaf = 0, 
-                 node_depth = 0):
+                 node_depth = 0,
+                 contained_clusters = None):
         """
         Tree node class used in the Evidential Decision Tree
 
@@ -412,6 +423,8 @@ class TreeNode():
         """
 
         self.leafs = []
+
+        self.contained_clusters = contained_clusters
 
         self.mass = mass
         self.attribute = attribute
@@ -455,6 +468,7 @@ class TreeNode():
             self,
             feature_names=None,
             class_names=None,
+            cluster_names=None,
             focal_colors=None,
             diagram=None,
             parent=None,
@@ -497,8 +511,10 @@ class TreeNode():
         if diagram is None:
             diagram = schemdraw.Drawing(unit=1)
 
+        metacluster_prediction = "$"+" \\cup ".join([cluster_names[i+1] for i in range(len(self.contained_clusters)) if self.contained_clusters[i] == 1]) + "$"
+
         # Generate node text
-        text = f"{self.number_elements} samples\nmean of belief masses: ${np.around(self.node_mass, decimals=2).tolist()}$\nnode impurity ({self.impurity_type}): {np.around(self.impurity_value, decimals=2)}"
+        text = f"{self.number_elements} samples\nmean of belief masses: ${np.around(self.node_mass, decimals=2).tolist()}$\nbest label: {metacluster_prediction}\nnode impurity ({self.impurity_type}): {np.around(self.impurity_value, decimals=2)}"
         if not self.loss_cut == np.inf:
             text += f"\nloss of cut ({self.loss_type}): {np.around(self.loss_cut, decimals=2)}"
         #text = f"{self.number_elements} samples\n$M = {np.around(self.node_mass, decimals=2).tolist()}$\nnode impurity ({self.impurity_type}): {np.around(self.impurity_value, decimals=2)}\ncut loss ({self.loss_type}): {np.around(self.loss_cut, decimals=2)}"
@@ -556,6 +572,7 @@ class TreeNode():
             diagram = child.plot_tree(
                 feature_names=feature_names,
                 class_names=class_names,
+                cluster_names=cluster_names,
                 focal_colors=focal_colors,
                 diagram=diagram,
                 parent=node,
@@ -599,3 +616,35 @@ class TreeNode():
         """
 
         self.leafs.append(node)
+
+    def get_path(self, past_path = [], feature_labels=None, cluster_names=None):
+        """
+        Get the path of the node
+
+        Returns
+        -----
+        path : list
+            List of nodes
+        """
+
+        paths = []
+        for leaf in self.leafs:
+            if leaf.continuous_attribute == 1:
+                path = past_path + [f"{feature_labels(leaf.attribute)} ≤ {leaf.attribute_value:.2f}"]
+            elif leaf.continuous_attribute == 2:
+                path = past_path + [f"{feature_labels(leaf.attribute)} > {leaf.attribute_value:.2f}"]
+            
+            new_path = leaf.get_path(path, feature_labels, cluster_names)
+            # if there is a dict, in the list new_path
+            if any(isinstance(i, dict) for i in new_path):
+                paths.extend(new_path)
+            else:
+                paths.append(new_path)
+
+        if len(paths) == 0:
+            if cluster_names is not None:
+                return {cluster_names[self.attributed_metacluster+1] : past_path}
+            else:
+                return {self.attributed_metacluster : past_path}
+        
+        return paths
