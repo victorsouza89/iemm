@@ -6,8 +6,6 @@ Adapted from https://github.com/ArthurHoa/conflict-edt/tree/master (Conflict EDT
 Author: Victor Souza
 """
 
-from typing import List, Any
-
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.exceptions import NotFittedError
 from sklearn.metrics import accuracy_score
@@ -19,50 +17,28 @@ import schemdraw.flow as flow
 
 from lib import ibelief
 
-class Loss:
+class Loss:    
     @staticmethod
-    def define_incoherenceness(bel, pl):
-        assert bel.shape == pl.shape
-        
-        number_observations = bel.shape[0]
-        #number_clusters = bel.shape[1]
-
-        incoherenceness = np.zeros(int(number_observations*(number_observations + 1) / 2))
-        get_index = lambda i, j: int(j + i * (number_observations - (i + 1) / 2))
-
-        for i in range(number_observations):
-            for j in range(number_observations):
-                if not i  > j:
-                    index = get_index(i, j)
-                    incoherenceness[index] = np.sum(bel[i, :] * (1 - pl[j, :]) + bel[j, :] * (1 - pl[i, :]))/2
-
-        def calc_incoherenceness(indices):
-            loss = 0
-            n = 0
-            for i in indices:
-                for j in indices:
-                    if not i > j:
-                        loss += incoherenceness[get_index(i, j)]
-                        n += 1
-            loss = loss / n
-            return loss
-
-        return calc_incoherenceness
-    
-    @staticmethod
-    def mistakeness(masses, present_metacluster_idxs, missing_metacluster_idxs, powered_jaccard_matrix):
-        powered_jaccard_matrix_ = powered_jaccard_matrix[missing_metacluster_idxs, :][:, present_metacluster_idxs]
-        mistakeness_per_element = np.matmul(masses[:, missing_metacluster_idxs], 1-powered_jaccard_matrix_)
-        mistakeness = np.sum(mistakeness_per_element, axis=1)
+    def mistakeness(masses, missed_metaclusters, focal_sets, lambda_):
+        mistakeness = 0
+        for A_idx in missed_metaclusters:
+            A = focal_sets[A_idx+1]
+            for B_idx in range(len(focal_sets)):
+                B = focal_sets[B_idx]
+                num_intersection = np.sum(np.logical_and(A, B))
+                num_union = np.sum(np.logical_or(A, B))
+                if lambda_ == np.inf:
+                    mistakeness += masses[:, B_idx] * (1 - ((num_intersection / num_union) < 1))
+                elif lambda_ == 0:
+                    mistakeness += masses[:, B_idx] * ((num_intersection / num_union) > 0)
+                else:
+                    mistakeness += masses[:, B_idx] * (num_intersection / num_union) ** lambda_
         return np.mean(mistakeness)
 
 class XEDT(BaseEstimator, ClassifierMixin):
     def __init__(self, 
-                 lambda_mistakeness = np.inf, # default is the fuzzy mistake
-                 # the following parameters are stopping criteria
-                 min_samples_per_leaf : int = 0,
-                 max_depth : int = None,
-                 impurity_treshold : float = None):
+                 lambda_mistakeness : float = np.inf, # default is the fuzzy mistakeness
+                 ):
 
         # state of the model
         self.is_fitted = False
@@ -72,77 +48,40 @@ class XEDT(BaseEstimator, ClassifierMixin):
         self.root_node = TreeNode()
         self.leafs = []
 
-        # stopping criteria
-        self.min_samples_per_leaf = min_samples_per_leaf
-        self.max_depth = max_depth
-        self.impurity_treshold = impurity_treshold
-
-    def precompute_incoherenceness(self):
-            return Loss.define_incoherenceness(self.bel, self.pl)
-    
-    def precompute_mistakeness(self):
-        number_metaclusters, number_clusters = self.F.shape
-
-        powered_jaccard_matrix = np.ones((number_metaclusters, number_metaclusters))
-        if self.lambda_mistakeness == np.inf:
-            powered_jaccard_matrix = np.eye(number_metaclusters)
-        else:
-            for i in range(number_metaclusters):
-                for j in range(number_metaclusters):
-                    # get indexes that have 1
-                    get_focal_idxs = lambda x: set(np.where(self.F[x] == 1)[0])
-                    f_i = get_focal_idxs(i)
-                    f_j = get_focal_idxs(j)
-
-                    try:
-                        if not self.lambda_mistakeness == 0:
-                            powered_jaccard_matrix[i, j] = (len(f_i & f_j)/len(f_i | f_j))**self.lambda_mistakeness
-                        else:
-                            powered_jaccard_matrix[i, j] = np.ceil(len(f_i & f_j)/len(f_i | f_j))
-                    except ZeroDivisionError:
-                        pass
-        
-        def mistakeness(indices, present_metacluster_idxs, missing_metacluster_idxs):
-            missing_metacluster_idxs = list(np.array(missing_metacluster_idxs) + 1)
-            present_metacluster_idxs = list(np.array(present_metacluster_idxs) + 1)
-
-            return Loss.mistakeness(self.mass_train[indices], present_metacluster_idxs, missing_metacluster_idxs, powered_jaccard_matrix)
-        
-        return mistakeness
-
+    def get_metacluster_centroids(self):
+        metacluster_centroids = []
+        for i in range(len(self.F)):
+            if np.sum(self.F[i]) > 0:
+                centroid = np.zeros(self.number_attributes)
+                for point in range(self.X.shape[0]):
+                    centroid += self.X[point] * self.mass[point, i]
+                centroid /= np.sum(self.mass[:, i])
+                metacluster_centroids.append(centroid)
+        return np.array(metacluster_centroids)
 
     def fit(self, X, mass, F):
         # Save train dataset
-        self.X_train = X
-        self.mass_train = mass
-        self.size_train = self.X_train.shape[0]
-
-        self.number_attributes = self.X_train.shape[1]
-        self.attributes = np.array(range(self.number_attributes))
-        X_indices = np.array(range(self.size_train))
-        
+        self.F = F
+        self.X = X
+        self.mass = mass
         self.pl = np.matmul(mass, F)
         self.bel = mass[:, np.sum(F, axis=1) == 1]
 
-        self.F = F
-
-        self.metacluster_centroids = []
-        for i in range(len(F)):
-            if np.sum(F[i]) > 0:
-                centroid = np.zeros(self.number_attributes)
-                for point in range(self.size_train):
-                    centroid += self.X_train[point] * mass[point, i]
-                centroid /= np.sum(mass[:, i])
-                self.metacluster_centroids.append(centroid)
-        self.metacluster_centroids = np.array(self.metacluster_centroids)
-        
-        # precompute losses
-        self.incoherenceness = self.precompute_incoherenceness()
-        self.mistakeness = self.precompute_mistakeness()
+        # Save metacluster information
+        self.number_attributes = self.X.shape[1]
+        self.attributes = np.array(range(self.number_attributes))  
+        self.metacluster_centroids = self.get_metacluster_centroids()
 
         # Construction of the tree
-        self.root_node = TreeNode(contained_clusters=np.max(self.F[1:,:], axis=0))
-        self._build_tree(X_indices, self.root_node, metaclusters_idxs = range(len(self.F)-1))
+        self.root_node = TreeNode(
+            contained_clusters=np.max(self.F[1:,:], axis=0),
+            mass=ibelief.DST(self.mass.T, 12).flatten()
+        )
+        self._build_tree(
+            indices = np.array(range(self.X.shape[0])), 
+            root_node = self.root_node, 
+            metaclusters_idxs = np.array(range(len(self.F)-1))
+        )
 
         # The model is now fitted
         self._fitted = True
@@ -150,8 +89,6 @@ class XEDT(BaseEstimator, ClassifierMixin):
         return self
 
     def _build_tree(self, indices, root_node, metaclusters_idxs):
-        root_node.impurity_value = self.incoherenceness(indices)
-        
         # Node depth
         node_depth = root_node.node_depth + 1
 
@@ -159,45 +96,43 @@ class XEDT(BaseEstimator, ClassifierMixin):
         attribute, threshold, loss = self._best_gain(indices, metaclusters_idxs)
 
         # Stopping criteria
-        if self.max_depth is not None:
-            if node_depth >= self.max_depth:
-                attribute = None
-        if self.impurity_treshold is not None:
-            if root_node.impurity_value < self.impurity_treshold:
-                attribute = None
-
         if len(metaclusters_idxs) < 2:
             attribute = None
             if len(metaclusters_idxs) == 1:
                 root_node.attributed_metacluster = metaclusters_idxs[0]
 
         if attribute != None: 
-                # Left node
                 left_condition = lambda x: np.where(x[:,attribute].astype(float) < threshold)[0]
-                left_metaclusters_idx = list(set(left_condition(self.metacluster_centroids)) & set(metaclusters_idxs))
-                contained_clusters = np.max(self.F[1:,:][left_metaclusters_idx], axis=0)
-                node = TreeNode(attribute=attribute, attribute_value=threshold, continuous_attribute=1, node_depth=node_depth, contained_clusters=contained_clusters)
-                self._build_tree(indices[left_condition(self.X_train[indices])], node, metaclusters_idxs=left_metaclusters_idx)
-                root_node.leafs.append(node) 
-                
-                # Right node
                 right_condition = lambda x: np.where(x[:,attribute].astype(float) >= threshold)[0]
-                right_metaclusters_idx = list(set(right_condition(self.metacluster_centroids)) & set(metaclusters_idxs))
-                contained_clusters = np.max(self.F[1:,:][right_metaclusters_idx], axis=0)
-                node = TreeNode(attribute=attribute, attribute_value=threshold, continuous_attribute=2, node_depth=node_depth, contained_clusters=contained_clusters)
-                self._build_tree(indices[right_condition(self.X_train[indices])], node, metaclusters_idxs=right_metaclusters_idx)
-                root_node.leafs.append(node)
+                sides = {
+                    1: left_condition,
+                    2: right_condition
+                }
+
+                for side_i, side in sides.items():
+                    metacluster_idxs = list(set(side(self.metacluster_centroids)) & set(metaclusters_idxs))
+                    contained_clusters = np.max(self.F[1:,:][metacluster_idxs], axis=0)
+                    node = TreeNode(
+                        attribute=attribute,
+                        attribute_value=threshold,
+                        continuous_attribute=side_i,
+                        node_depth=node_depth,
+                        contained_clusters=contained_clusters
+                        )
+                    self._build_tree(
+                        indices=indices[side(self.X[indices])],
+                        root_node=node,
+                        metaclusters_idxs=metacluster_idxs)
+                    root_node.leafs.append(node)
         else:
             # Append a mass if the node is a leaf
-            root_node.mass = ibelief.DST(self.mass_train[indices].T, 12).flatten()
-            root_node.number_leaf = self.mass_train[indices].shape[0]
+            root_node.is_leaf = True
             self.leafs.append(root_node)
-        
-        root_node.node_mass = ibelief.DST(self.mass_train[indices].T, 12).flatten()
-        root_node.number_elements = self.mass_train[indices].shape[0]
-        root_node.impurity_type = "incoherenceness"
-        root_node.loss_cut = loss
-        root_node.loss_type = "mistakeness"
+
+        root_node.mass = ibelief.DST(self.mass[indices].T, 12).flatten()
+        root_node.number_elements = self.mass[indices].shape[0]
+        root_node.mistakeness_cut = loss
+        root_node.F = self.F
 
     def _best_gain(self, indices, metacluster_idxs):
         thresholds = []
@@ -224,7 +159,7 @@ class XEDT(BaseEstimator, ClassifierMixin):
         node_size = indices.shape[0]
 
         # Find uniques values for the attribute
-        values = np.sort(np.unique(self.X_train[indices , attribute]).astype(float))
+        values = np.sort(np.unique(self.X[indices , attribute]).astype(float))
 
         # If there is only one value, return None
         if values.shape[0] < 2:
@@ -248,15 +183,25 @@ class XEDT(BaseEstimator, ClassifierMixin):
             if len(left_metacluster_idxs) == 0 or len(right_metacluster_idxs) == 0:
                 losses[tresholds.index(treshold)] = np.inf
             else:
-                left_indices = indices[left_condition(self.X_train[indices])]
-                right_indices = indices[right_condition(self.X_train[indices])]
+                left_indices = indices[left_condition(self.X[indices])]
+                right_indices = indices[right_condition(self.X[indices])]
                 
                 left_size = left_indices.shape[0]
                 right_size = right_indices.shape[0]
 
                 # Compute the loss
-                loss_left = self.mistakeness(left_indices, left_metacluster_idxs, right_metacluster_idxs)
-                loss_right = self.mistakeness(right_indices, right_metacluster_idxs, left_metacluster_idxs)
+                loss_left = Loss.mistakeness(
+                    masses=self.mass[left_indices],
+                    missed_metaclusters=right_metacluster_idxs,
+                    focal_sets=self.F,
+                    lambda_=self.lambda_mistakeness
+                )
+                loss_right = Loss.mistakeness(
+                    masses=self.mass[right_indices],
+                    missed_metaclusters=left_metacluster_idxs,
+                    focal_sets=self.F,
+                    lambda_=self.lambda_mistakeness
+                )
                 loss = (loss_left*left_size + loss_right*right_size) / node_size
                 losses[tresholds.index(treshold)] = loss
 
@@ -277,7 +222,7 @@ class XEDT(BaseEstimator, ClassifierMixin):
             Array of normalized bba
         """
 
-        if type(root_node.mass) is np.ndarray:
+        if root_node.is_leaf:
             return root_node.mass
 
         for v in root_node.leafs:
@@ -325,7 +270,7 @@ class XEDT(BaseEstimator, ClassifierMixin):
             raise NotFittedError("The classifier has not been fitted yet")
 
         # Predict output bbas for X
-        result = np.zeros((X.shape[0], self.mass_train.shape[1]))
+        result = np.zeros((X.shape[0], self.mass.shape[1]))
         for x in range(X.shape[0]):
             result[x] = self._predict(X[x], self.root_node)
 
@@ -397,8 +342,7 @@ class TreeNode():
                  mass = None, 
                  attribute = None, 
                  attribute_value = 0, 
-                 continuous_attribute = 0, 
-                 number_leaf = 0, 
+                 continuous_attribute = 0,
                  node_depth = 0,
                  contained_clusters = None):
         """
@@ -427,13 +371,12 @@ class TreeNode():
         self.contained_clusters = contained_clusters
 
         self.mass = mass
+        self.is_leaf = False
         self.attribute = attribute
         self.attribute_value = attribute_value
         self.continuous_attribute = continuous_attribute
-        self.number_leaf = number_leaf
         self.node_depth = node_depth
         self.number_elements = 0
-        self.node_mass = None
         self.impurity_value = None
         self.impurity_type = None
     
@@ -446,23 +389,6 @@ class TreeNode():
             return depth
 
         return np.max(np.array(maximum_depth))
-
-    def mean_samples_leafs(self):
-        samples = []
-
-        for i in self.leafs:
-            childs = i.mean_samples_leafs()
-
-            if isinstance(childs, int):
-                samples.append(childs)
-            else:
-                for j in childs:
-                    samples.append(j)
-        
-        if len(self.leafs) == 0:
-            return self.number_leaf
-
-        return samples
 
     def plot_tree(
             self,
@@ -514,14 +440,15 @@ class TreeNode():
         metacluster_prediction = "$"+" \\cup ".join([cluster_names[i+1] for i in range(len(self.contained_clusters)) if self.contained_clusters[i] == 1]) + "$"
 
         # Generate node text
-        text = f"{self.number_elements} samples\nmean of belief masses: ${np.around(self.node_mass, decimals=2).tolist()}$\nbest label: {metacluster_prediction}\nnode impurity ({self.impurity_type}): {np.around(self.impurity_value, decimals=2)}"
-        if not self.loss_cut == np.inf:
-            text += f"\nloss of cut ({self.loss_type}): {np.around(self.loss_cut, decimals=2)}"
-        #text = f"{self.number_elements} samples\n$M = {np.around(self.node_mass, decimals=2).tolist()}$\nnode impurity ({self.impurity_type}): {np.around(self.impurity_value, decimals=2)}\ncut loss ({self.loss_type}): {np.around(self.loss_cut, decimals=2)}"
+        text = f"{self.number_elements} samples\nmean of belief masses: ${np.around(self.mass, decimals=2).tolist()}$\nbest label: {metacluster_prediction}"
+        text += f"\nmistakeness of: {np.around(self.mistakeness_cut, decimals=2)}"
+        
+        #pl = np.matmul(self.mass, self.F)
+        #bel = self.mass[:, np.sum(self.F, axis=1) == 1]
 
         # Generate node color
         if focal_colors is not None:
-            color = np.dot(self.node_mass.reshape(1, -1), focal_colors).clip(0, 1).flatten().tolist()
+            color = np.dot(self.mass.reshape(1, -1), focal_colors).clip(0, 1).flatten().tolist()
         else:
             color = 'white'
 
