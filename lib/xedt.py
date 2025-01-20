@@ -557,9 +557,9 @@ class TreeNode():
         paths = []
         for leaf in self.leafs:
             if leaf.continuous_attribute == 1:
-                path = past_path + [f"{feature_labels(leaf.attribute)} ≤ {leaf.attribute_value:.2f}"]
+                path = past_path + [f"${feature_labels(leaf.attribute)} \leq {leaf.attribute_value:.2f}$"]
             elif leaf.continuous_attribute == 2:
-                path = past_path + [f"{feature_labels(leaf.attribute)} > {leaf.attribute_value:.2f}"]
+                path = past_path + [f"${feature_labels(leaf.attribute)} > {leaf.attribute_value:.2f}$"]
             
             new_path = leaf.get_path(path, feature_labels, cluster_names)
             # if there is a dict, in the list new_path
