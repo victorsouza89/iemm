@@ -22,7 +22,7 @@ class Loss:
     def mistakeness(masses, missed_metaclusters, focal_sets, lambda_):
         mistakeness = 0
         for A_idx in missed_metaclusters:
-            A = focal_sets[A_idx+1]
+            A = focal_sets[A_idx]
             for B_idx in range(len(focal_sets)):
                 B = focal_sets[B_idx]
                 num_intersection = np.sum(np.logical_and(A, B))
@@ -74,13 +74,13 @@ class XEDT(BaseEstimator, ClassifierMixin):
 
         # Construction of the tree
         self.root_node = TreeNode(
-            contained_clusters=np.max(self.F[1:,:], axis=0),
+            contained_clusters=np.max(self.F, axis=0),
             mass=ibelief.DST(self.mass.T, 12).flatten()
         )
         self._build_tree(
             indices = np.array(range(self.X.shape[0])), 
             root_node = self.root_node, 
-            metaclusters_idxs = np.array(range(len(self.F)-1))
+            metaclusters_idxs = np.array(range(len(self.F)))
         )
 
         # The model is now fitted
@@ -111,7 +111,7 @@ class XEDT(BaseEstimator, ClassifierMixin):
 
                 for side_i, side in sides.items():
                     metacluster_idxs = list(set(side(self.metacluster_centroids)) & set(metaclusters_idxs))
-                    contained_clusters = np.max(self.F[1:,:][metacluster_idxs], axis=0)
+                    contained_clusters = np.max(self.F[metacluster_idxs], axis=0)
                     node = TreeNode(
                         attribute=attribute,
                         attribute_value=threshold,
@@ -151,7 +151,7 @@ class XEDT(BaseEstimator, ClassifierMixin):
         threshold = thresholds[chosen_attribute]
         
         if threshold is None:
-            return None, None
+            return None, None, np.inf
         
         return chosen_attribute, threshold, losses[chosen_attribute]
     
@@ -240,9 +240,28 @@ class XEDT(BaseEstimator, ClassifierMixin):
         print("Classification Error, Tree not complete.")
         return None
 
+    def _predict_metacluster(self, X, root_node):
+        if root_node.is_leaf:
+            return root_node.contained_clusters
+
+        for v in root_node.leafs:
+            if v.continuous_attribute == 3:
+                if X[v.attribute].astype(float) >= v.attribute_value[0] and X[v.attribute].astype(float) < v.attribute_value[1]:
+                    return self._predict_metacluster(X, v)
+            else:
+                if v.continuous_attribute == 0 and X[v.attribute] == v.attribute_value:
+                    return self._predict_metacluster(X, v)
+                elif v.continuous_attribute == 1 and X[v.attribute].astype(float) < v.attribute_value:
+                    return self._predict_metacluster(X, v)
+                elif v.continuous_attribute == 2 and X[v.attribute].astype(float) >= v.attribute_value:
+                    return self._predict_metacluster(X, v)
+        
+        print("Classification Error, Tree not complete.")
+        return None
 
 
-    def predict(self, X, criterion=3, return_bba=False):
+
+    def predict(self, X):
         """
         Predict labels of input data. Can return all bbas. Criterion are :
         "Max Credibility", "Max Plausibility" and "Max Pignistic Probability".
@@ -274,24 +293,24 @@ class XEDT(BaseEstimator, ClassifierMixin):
         for x in range(X.shape[0]):
             result[x] = self._predict(X[x], self.root_node)
 
-        # Max Plausibility
-        if criterion == 1:
-            predictions = ibelief.decisionDST(result.T, 1)
-        # Max Credibility
-        elif criterion == 2:
-            predictions = ibelief.decisionDST(result.T, 2)
-        # Max Pignistic probability
-        elif criterion == 3:
-            predictions = ibelief.decisionDST(result.T, 4)
-        else:
-            raise ValueError("Unknown decision criterion")
-
-        # Return predictions or both predictions and bbas
-        if return_bba:
-            return predictions, result
-        else:
-            return predictions
+        return result
     
+    def predict_metacluster(self, X):
+        # Verify if the model is fitted or not
+        if not self._fitted:
+            raise NotFittedError("The classifier has not been fitted yet")
+
+        # Predict output bbas for X
+        result = []
+        for x in range(X.shape[0]):
+            metacluster = self._predict_metacluster(X[x], self.root_node)
+            idx_metacluster = np.where(np.all(self.F == metacluster, axis=1))[0][0]
+            result.append(idx_metacluster)
+
+        result = np.array(result)
+
+        return result
+
     def plot_tree(self,
                   feature_names=None,
                   class_names=None,
@@ -437,10 +456,10 @@ class TreeNode():
         if diagram is None:
             diagram = schemdraw.Drawing(unit=1)
 
-        metacluster_prediction = "$"+" \\cup ".join([cluster_names[i+1] for i in range(len(self.contained_clusters)) if self.contained_clusters[i] == 1]) + "$"
+        metacluster_prediction = cluster_names#"$"+" \\cup ".join([cluster_names[i+1] for i in range(len(self.contained_clusters)) if self.contained_clusters[i] == 1]) + "$"
 
         # Generate node text
-        text = f"{self.number_elements} samples\nmean of belief masses: ${np.around(self.mass, decimals=2).tolist()}$\nbest label: {metacluster_prediction}"
+        text = f"{self.number_elements} samples\nmean of belief masses: ${np.around(self.mass, decimals=2).tolist()}"#$\nbest label: {metacluster_prediction}"
         text += f"\nmistakeness of: {np.around(self.mistakeness_cut, decimals=2)}"
         
         #pl = np.matmul(self.mass, self.F)
