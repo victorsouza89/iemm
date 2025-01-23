@@ -11,6 +11,7 @@ from sklearn.exceptions import NotFittedError
 from sklearn.metrics import accuracy_score
 
 import numpy as np
+import pandas as pd
 
 import schemdraw
 import schemdraw.flow as flow
@@ -352,9 +353,9 @@ class XEDT(BaseEstimator, ClassifierMixin):
         )
     
 
-    def get_path(self, feature_names=None, cluster_names=None):
+    def get_path(self, feature_names=None, focalset_names=None):
         feature_labels = (lambda x: feature_names[x]) if feature_names else (lambda x: f"Feat{x}")
-        return self.root_node.get_path(feature_labels=feature_labels, cluster_names=cluster_names)
+        return self.root_node.get_path(feature_labels=feature_labels, focalset_names=focalset_names)
 
 class TreeNode():
     def __init__(self, 
@@ -563,7 +564,7 @@ class TreeNode():
 
         self.leafs.append(node)
 
-    def get_path(self, past_path = [], feature_labels=None, cluster_names=None):
+    def get_path(self, past_path = [], feature_labels=None, focalset_names=None):
         """
         Get the path of the node
 
@@ -576,11 +577,15 @@ class TreeNode():
         paths = []
         for leaf in self.leafs:
             if leaf.continuous_attribute == 1:
-                path = past_path + [f"${feature_labels(leaf.attribute)} \leq {leaf.attribute_value:.2f}$"]
+                #path = past_path + [f"${feature_labels(leaf.attribute)} \leq {leaf.attribute_value:.2f}$"]
+                #leq case
+                path = past_path + [(feature_labels(leaf.attribute), leaf.attribute_value, 1)]
             elif leaf.continuous_attribute == 2:
-                path = past_path + [f"${feature_labels(leaf.attribute)} > {leaf.attribute_value:.2f}$"]
+                #path = past_path + [f"${feature_labels(leaf.attribute)} > {leaf.attribute_value:.2f}$"]
+                #greater case
+                path = past_path + [(feature_labels(leaf.attribute), leaf.attribute_value, 2)]
             
-            new_path = leaf.get_path(path, feature_labels, cluster_names)
+            new_path = leaf.get_path(path, feature_labels, focalset_names)
             # if there is a dict, in the list new_path
             if any(isinstance(i, dict) for i in new_path):
                 paths.extend(new_path)
@@ -588,9 +593,35 @@ class TreeNode():
                 paths.append(new_path)
 
         if len(paths) == 0:
-            if cluster_names is not None:
-                return {cluster_names[self.attributed_metacluster+1] : past_path}
+            # simplify the path, if an attribute has two conditions of the same type, it is not necessary to show both
+            past_path_df = pd.DataFrame(past_path, columns=["attribute", "value", "condition"])
+
+            for attribute in past_path_df.attribute.unique():
+                for condition in past_path_df[past_path_df.attribute == attribute].condition.unique():
+                    if len(past_path_df[(past_path_df.attribute == attribute) & (past_path_df.condition == condition)]) > 1:
+                        # if leq case is present, select the smallest value
+                        if condition == 1:
+                            min_value = past_path_df[(past_path_df.attribute == attribute) & (past_path_df.condition == condition)].value.min()
+                            past_path_df = past_path_df.drop(past_path_df[(past_path_df.attribute == attribute) & (past_path_df.condition == condition) & (past_path_df.value != min_value)].index)
+                        # if greater case is present, select the greatest value
+                        elif condition == 2:
+                            max_value = past_path_df[(past_path_df.attribute == attribute) & (past_path_df.condition == condition)].value.max()
+                            past_path_df = past_path_df.drop(past_path_df[(past_path_df.attribute == attribute) & (past_path_df.condition == condition) & (past_path_df.value != max_value)].index)
+
+            # format the path as string
+            strs_out = []
+            for _, row in past_path_df.iterrows():
+                if row.condition == 1:
+                    strs_out.append(f"({row.attribute} \leq {row.value:.2f})")
+                elif row.condition == 2:
+                    strs_out.append(f"({row.attribute} > {row.value:.2f})")
+
+            str_out = " \\wedge ".join(strs_out)
+            str_out = f"${str_out}$"
+
+            if focalset_names is not None:
+                return {focalset_names[self.attributed_metacluster] : str_out}
             else:
-                return {self.attributed_metacluster : past_path}
+                return {self.attributed_metacluster : str_out}
         
         return paths
