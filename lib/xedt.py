@@ -369,6 +369,8 @@ class XEDT(BaseEstimator, ClassifierMixin):
     
 
     def get_path(self, feature_names=None, focalset_names=None):
+        # print(feature_names)
+        # print(focalset_names)
         feature_labels = (lambda x: feature_names[x]) if feature_names else (lambda x: f"Feat{x}")
         return self.root_node.get_path(feature_labels=feature_labels, focalset_names=focalset_names)
 
@@ -486,7 +488,8 @@ class TreeNode():
             color = np.dot(self.mass.reshape(1, -1), focal_colors).clip(0, 1).flatten().tolist()
         else:
             color = 'white'
-
+        color = 'white'
+        # print(f"Node color: {color}")
         diagram += (node := flow.Box(
             h=box_height * box_scale,
             w=box_width * box_scale
