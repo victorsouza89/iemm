@@ -8,7 +8,6 @@ Author: Victor Souza
 
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.exceptions import NotFittedError
-from sklearn.metrics import accuracy_score
 
 import numpy as np
 import pandas as pd
@@ -20,20 +19,36 @@ from lib import ibelief
 
 class Loss:    
     @staticmethod
+    def S(A,B, lambda_, cautious_subset=True):
+        num_intersection = np.sum(np.logical_and(A, B))
+        num_union = np.sum(np.logical_or(A, B))
+
+        # print(A)
+        # print(B)
+
+        if cautious_subset:
+            if not num_intersection == np.sum(B):
+                # if B is not a subset of A
+                num_intersection = 0
+
+        if lambda_ == np.inf:
+            return np.floor(num_intersection / num_union)
+        elif lambda_ == 0:
+            return np.ceil(num_intersection / num_union)
+        else:
+            return (num_intersection / num_union) ** lambda_
+
+    @staticmethod
     def mistakeness(masses, missed_metaclusters, focal_sets, lambda_):
         mistakeness = 0
         for A_idx in missed_metaclusters:
             A = focal_sets[A_idx]
+            mistakeness_A = 0
             for B_idx in range(len(focal_sets)):
                 B = focal_sets[B_idx]
-                num_intersection = np.sum(np.logical_and(A, B))
-                num_union = np.sum(np.logical_or(A, B))
-                if lambda_ == np.inf:
-                    mistakeness += masses[:, B_idx] * (1 - ((num_intersection / num_union) < 1))
-                elif lambda_ == 0:
-                    mistakeness += masses[:, B_idx] * ((num_intersection / num_union) > 0)
-                else:
-                    mistakeness += masses[:, B_idx] * (num_intersection / num_union) ** lambda_
+                S = Loss.S(A, B, lambda_)
+                mistakeness_A += masses[:, B_idx] * S
+            mistakeness += mistakeness_A 
         return np.mean(mistakeness)
 
 class XEDT(BaseEstimator, ClassifierMixin):
