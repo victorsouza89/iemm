@@ -19,35 +19,53 @@ from lib import ibelief
 
 class Loss:    
     @staticmethod
-    def S(A,B, lambda_, cautious_subset=True):
+    def S(A,B, lambda_):
         num_intersection = np.sum(np.logical_and(A, B))
         num_union = np.sum(np.logical_or(A, B))
 
         # print(A)
         # print(B)
 
-        if cautious_subset:
+        if lambda_ > 0:
             if not num_intersection == np.sum(B):
                 # if B is not a subset of A
                 num_intersection = 0
+        else:
+            lambda_ = -lambda_
+            if not num_intersection == np.sum(A):
+                # if A is not a subset of B
+                num_intersection = 0
 
-        if lambda_ == np.inf:
+        if lambda_ == 0:
             return np.floor(num_intersection / num_union)
-        elif lambda_ == 0:
+        elif lambda_ == np.inf:
             return np.ceil(num_intersection / num_union)
         else:
-            return (num_intersection / num_union) ** lambda_
+            return (num_intersection / num_union) ** (1/lambda_)
 
     @staticmethod
-    def mistakeness(masses, missed_metaclusters, focal_sets, lambda_):
+    def mistakeness_missed(masses, metaclusters, focal_sets, lambda_):
         mistakeness = 0
-        for A_idx in missed_metaclusters:
+        for A_idx in metaclusters:
             A = focal_sets[A_idx]
             mistakeness_A = 0
             for B_idx in range(len(focal_sets)):
                 B = focal_sets[B_idx]
                 S = Loss.S(A, B, lambda_)
                 mistakeness_A += masses[:, B_idx] * S
+            mistakeness += mistakeness_A 
+        return np.mean(mistakeness)
+
+    @staticmethod
+    def mistakeness_assigned(masses, metaclusters, focal_sets, lambda_):
+        mistakeness = 0
+        for A_idx in metaclusters:
+            A = focal_sets[A_idx]
+            mistakeness_A = 0
+            for B_idx in range(len(focal_sets)):
+                B = focal_sets[B_idx]
+                S = Loss.S(A, B, lambda_)
+                mistakeness_A += masses[:, B_idx] * (1-S)/len(metaclusters)
             mistakeness += mistakeness_A 
         return np.mean(mistakeness)
 
@@ -205,16 +223,25 @@ class IEMM(BaseEstimator, ClassifierMixin):
                 left_size = left_indices.shape[0]
                 right_size = right_indices.shape[0]
 
+                if self.lambda_mistakeness > 0:
+                    mistakeness = Loss.mistakeness_missed
+                    l_metaclusters = right_metacluster_idxs
+                    r_metaclusters = left_metacluster_idxs
+                else:
+                    mistakeness = Loss.mistakeness_assigned
+                    l_metaclusters = left_metacluster_idxs
+                    r_metaclusters = right_metacluster_idxs
+
                 # Compute the loss
-                loss_left = Loss.mistakeness(
+                loss_left = mistakeness(
                     masses=self.mass[left_indices],
-                    missed_metaclusters=right_metacluster_idxs,
+                    metaclusters=l_metaclusters,
                     focal_sets=self.F,
                     lambda_=self.lambda_mistakeness
                 )
-                loss_right = Loss.mistakeness(
+                loss_right = mistakeness(
                     masses=self.mass[right_indices],
-                    missed_metaclusters=left_metacluster_idxs,
+                    metaclusters=r_metaclusters,
                     focal_sets=self.F,
                     lambda_=self.lambda_mistakeness
                 )
