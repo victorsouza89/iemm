@@ -54,7 +54,7 @@ class Loss:
                 S = Loss.S(A, B, lambda_)
                 mistakeness_A += masses[:, B_idx] * S
             mistakeness += mistakeness_A 
-        return np.mean(mistakeness)
+        return np.sum(mistakeness)
 
     @staticmethod
     def mistakeness_assigned(masses, metaclusters, focal_sets, lambda_):
@@ -67,7 +67,7 @@ class Loss:
                 S = Loss.S(A, B, lambda_)
                 mistakeness_A += masses[:, B_idx] * (1-S)/len(metaclusters)
             mistakeness += mistakeness_A 
-        return np.mean(mistakeness)
+        return np.sum(mistakeness)
 
 class IEMM(BaseEstimator, ClassifierMixin):
     def __init__(self, 
@@ -219,9 +219,6 @@ class IEMM(BaseEstimator, ClassifierMixin):
             else:
                 left_indices = indices[left_condition(self.X[indices])]
                 right_indices = indices[right_condition(self.X[indices])]
-                
-                left_size = left_indices.shape[0]
-                right_size = right_indices.shape[0]
 
                 if self.lambda_mistakeness > 0:
                     mistakeness = Loss.mistakeness_missed
@@ -245,7 +242,7 @@ class IEMM(BaseEstimator, ClassifierMixin):
                     focal_sets=self.F,
                     lambda_=self.lambda_mistakeness
                 )
-                loss = (loss_left*left_size + loss_right*right_size) / node_size
+                loss = (loss_left + loss_right) / node_size
                 losses[tresholds.index(treshold)] = loss
 
         return tresholds[np.argmin(losses)], np.min(losses)
