@@ -23,6 +23,12 @@ If you use this library in your research, please cite:
 
 ## Installation
 
+### From PyPI (recommended)
+
+```bash
+pip install iemm
+```
+
 ### From source (development)
 
 ```bash
