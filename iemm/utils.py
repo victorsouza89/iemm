@@ -1,12 +1,53 @@
+"""
+Utility functions and classes for the IEMM library.
+
+This module provides utility functions for distance calculations, criteria computation,
+and other helper functions used throughout the IEMM algorithm.
+
+Author: Victor Souza
+"""
+
 import numpy as np
 import math
+from typing import Optional, Union, List, Tuple
 from . import belief as ibelief
 
 class Utils:
+    """
+    Utility functions for evidential clustering computations.
+    
+    This class provides static methods for various utility computations
+    used in evidential clustering and decision tree construction.
+    """
+    
     @staticmethod
-    def jaccard_matrix_calculus(number_metaclasses):
+    def jaccard_matrix_calculus(number_metaclasses: int) -> np.ndarray:
         """
-        Compute the Jaccard matrix for the disernment framework of the given mass function
+        Compute the Jaccard similarity matrix for the discernment framework.
+        
+        This function calculates the Jaccard similarity between all pairs of
+        focal elements in a discernment framework with the given number of metaclasses.
+        
+        Parameters
+        ----------
+        number_metaclasses : int
+            Number of metaclasses in the discernment framework
+            
+        Returns
+        -------
+        np.ndarray
+            Jaccard similarity matrix, shape (number_metaclasses, number_metaclasses)
+            
+        Examples
+        --------
+        >>> jaccard_matrix = Utils.jaccard_matrix_calculus(4)
+        >>> print(jaccard_matrix.shape)
+        (4, 4)
+        
+        Notes
+        -----
+        The function assumes a power set structure where number_metaclasses = 2^n
+        for some number of atoms n.
         """
         natoms = round(np.log2(number_metaclasses))
         ind = [{}]*number_metaclasses
@@ -30,8 +71,37 @@ class Utils:
         return out
 
 class Criterion:
+    """
+    Criterion functions for decision tree splitting.
+    
+    This class provides methods for computing various criteria used in
+    evidential decision tree construction, including conflict measures
+    and uncertainty measures.
+    """
+    
     @staticmethod
-    def conflict(m1, m2):
+    def conflict(m1: np.ndarray, m2: np.ndarray) -> float:
+        """
+        Compute the conflict measure between two mass functions.
+        
+        Parameters
+        ----------
+        m1 : np.ndarray
+            First mass function
+        m2 : np.ndarray
+            Second mass function
+            
+        Returns
+        -------
+        float
+            Conflict measure between the mass functions
+            
+        Examples
+        --------
+        >>> m1 = np.array([0.6, 0.3, 0.1])
+        >>> m2 = np.array([0.4, 0.4, 0.2])
+        >>> conflict = Criterion.conflict(m1, m2)
+        """
         return np.sum(np.abs(m1 - m2))
     
     def _compute_info(self, indices):

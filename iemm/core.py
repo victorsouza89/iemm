@@ -1,6 +1,10 @@
 """
 Iterative Evidential Mistakeness Minimization
 
+This module implements the core IEMM algorithm for explainable evidential clustering.
+The algorithm generates interpretable decision tree explanations for evidential clustering
+functions based on Dempster-Shafer theory.
+
 Adapted from https://github.com/ArthurHoa/conflict-edt/tree/master (Conflict EDT, Arthur Hoarau, 02/01/2025).
 
 Author: Victor Souza
@@ -8,6 +12,7 @@ Author: Victor Souza
 
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.exceptions import NotFittedError
+from typing import Optional, Union, List, Tuple, Callable, Dict, Any
 
 import numpy as np
 import pandas as pd
@@ -18,9 +23,40 @@ import schemdraw.flow as flow
 
 from . import belief as ibelief
 
-class Loss:    
+class Loss:
+    """
+    Loss functions for evidential clustering.
+    
+    This class provides static methods for computing different types of loss functions
+    used in the IEMM algorithm, including mistakeness losses for decision tree construction.
+    """
+    
     @staticmethod
-    def S(A,B, lambda_):
+    def S(A: np.ndarray, B: np.ndarray, lambda_: float) -> float:
+        """
+        Compute the similarity measure between two focal sets.
+        
+        Parameters
+        ----------
+        A : np.ndarray
+            First focal set (binary array indicating cluster membership)
+        B : np.ndarray
+            Second focal set (binary array indicating cluster membership)
+        lambda_ : float
+            Lambda parameter controlling the similarity measure behavior
+            
+        Returns
+        -------
+        float
+            Similarity measure between focal sets A and B
+            
+        Examples
+        --------
+        >>> A = np.array([1, 0, 1])
+        >>> B = np.array([1, 1, 0])
+        >>> Loss.S(A, B, 1.0)
+        0.333...
+        """
         num_intersection = np.sum(np.logical_and(A, B))
         num_union = np.sum(np.logical_or(A, B))
 
@@ -45,7 +81,27 @@ class Loss:
             return (num_intersection / num_union) ** (1/lambda_)
 
     @staticmethod
-    def mistakeness_missed(masses, metaclusters, focal_sets, lambda_):
+    def mistakeness_missed(masses: np.ndarray, metaclusters: List[int], 
+                          focal_sets: np.ndarray, lambda_: float) -> float:
+        """
+        Compute the mistakeness loss for missed assignments.
+        
+        Parameters
+        ----------
+        masses : np.ndarray
+            Mass functions for each sample, shape (n_samples, n_focal_sets)
+        metaclusters : List[int]
+            Indices of metaclusters to consider
+        focal_sets : np.ndarray
+            Focal sets matrix, shape (n_focal_sets, n_clusters)
+        lambda_ : float
+            Lambda parameter for the loss function
+            
+        Returns
+        -------
+        float
+            Total mistakeness loss for missed assignments
+        """
         mistakeness = 0
         for A_idx in metaclusters:
             A = focal_sets[A_idx]
@@ -58,7 +114,27 @@ class Loss:
         return np.sum(mistakeness)
 
     @staticmethod
-    def mistakeness_assigned(masses, metaclusters, focal_sets, lambda_):
+    def mistakeness_assigned(masses: np.ndarray, metaclusters: List[int], 
+                           focal_sets: np.ndarray, lambda_: float) -> float:
+        """
+        Compute the mistakeness loss for assigned samples.
+        
+        Parameters
+        ----------
+        masses : np.ndarray
+            Mass functions for each sample, shape (n_samples, n_focal_sets)
+        metaclusters : List[int]
+            Indices of metaclusters to consider
+        focal_sets : np.ndarray
+            Focal sets matrix, shape (n_focal_sets, n_clusters)
+        lambda_ : float
+            Lambda parameter for the loss function
+            
+        Returns
+        -------
+        float
+            Total mistakeness loss for assigned samples
+        """
         mistakeness = 0
         for A_idx in metaclusters:
             A = focal_sets[A_idx]
@@ -71,10 +147,74 @@ class Loss:
         return np.sum(mistakeness)
 
 class IEMM(BaseEstimator, ClassifierMixin):
-    def __init__(self, 
-                 lambda_mistakeness : float = np.inf, # default is the fuzzy mistakeness
-                 ):
-
+    """
+    Iterative Evidential Mistakeness Minimization (IEMM) classifier.
+    
+    IEMM is an explainable evidential clustering algorithm that generates interpretable
+    decision tree explanations for evidential clustering functions. The algorithm is
+    based on Dempster-Shafer theory and accounts for decision-maker preferences.
+    
+    Parameters
+    ----------
+    lambda_mistakeness : float, default=np.inf
+        Lambda parameter controlling the mistakeness function behavior.
+        When lambda_mistakeness > 0, uses mistakeness_missed function.
+        When lambda_mistakeness < 0, uses mistakeness_assigned function.
+        Default is np.inf (fuzzy mistakeness).
+        
+    Attributes
+    ----------
+    is_fitted : bool
+        Whether the model has been fitted
+    root_node : TreeNode
+        Root node of the decision tree
+    leafs : List[TreeNode]
+        List of leaf nodes in the decision tree
+    F : np.ndarray
+        Focal sets matrix
+    X : np.ndarray
+        Training feature matrix
+    mass : np.ndarray
+        Mass functions for training samples
+    pl : np.ndarray
+        Plausibility values
+    bel : np.ndarray
+        Belief values
+    number_attributes : int
+        Number of features in the dataset
+    attributes : np.ndarray
+        Array of attribute indices
+    metacluster_centroids : np.ndarray
+        Centroids of metaclusters
+        
+    Examples
+    --------
+    >>> from iemm import IEMM
+    >>> import numpy as np
+    >>> # Create sample data
+    >>> X = np.random.rand(100, 2)
+    >>> mass = np.random.rand(100, 4)
+    >>> F = np.array([[1, 0], [0, 1], [1, 1], [0, 0]])
+    >>> # Create and fit classifier
+    >>> classifier = IEMM(lambda_mistakeness=1.0)
+    >>> classifier.fit(X, mass, F)
+    >>> predictions = classifier.predict(X)
+    
+    References
+    ----------
+    .. [1] Lopes de Souza, V. F., et al. "Explainable Evidential Clustering."
+           arXiv preprint arXiv:2507.12192 (2025).
+    """
+    
+    def __init__(self, lambda_mistakeness: float = np.inf) -> None:
+        """
+        Initialize the IEMM classifier.
+        
+        Parameters
+        ----------
+        lambda_mistakeness : float, default=np.inf
+            Lambda parameter controlling the mistakeness function behavior
+        """
         # state of the model
         self.is_fitted = False
         self.lambda_mistakeness = lambda_mistakeness
@@ -83,7 +223,15 @@ class IEMM(BaseEstimator, ClassifierMixin):
         self.root_node = TreeNode()
         self.leafs = []
 
-    def get_metacluster_centroids(self):
+    def get_metacluster_centroids(self) -> np.ndarray:
+        """
+        Calculate centroids for each metacluster based on mass-weighted features.
+        
+        Returns
+        -------
+        np.ndarray
+            Array of metacluster centroids, shape (n_metaclusters, n_features)
+        """
         metacluster_centroids = []
         for i in range(len(self.F)):
             if np.sum(self.F[i]) > 0:
@@ -94,7 +242,29 @@ class IEMM(BaseEstimator, ClassifierMixin):
                 metacluster_centroids.append(centroid)
         return np.array(metacluster_centroids)
 
-    def fit(self, X, mass, F):
+    def fit(self, X: np.ndarray, mass: np.ndarray, F: np.ndarray) -> 'IEMM':
+        """
+        Fit the IEMM classifier to training data.
+        
+        Parameters
+        ----------
+        X : np.ndarray
+            Training feature matrix, shape (n_samples, n_features)
+        mass : np.ndarray
+            Mass functions for each sample, shape (n_samples, n_focal_sets)
+        F : np.ndarray
+            Focal sets matrix, shape (n_focal_sets, n_clusters)
+            
+        Returns
+        -------
+        self : IEMM
+            Returns the instance itself for method chaining
+            
+        Examples
+        --------
+        >>> classifier = IEMM()
+        >>> classifier.fit(X_train, mass_train, F)
+        """
         # Save train dataset
         self.F = F
         self.X = X
@@ -270,7 +440,31 @@ class IEMM(BaseEstimator, ClassifierMixin):
         return None
 
     
-    def predict(self, X):
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """
+        Predict metacluster assignments for new samples.
+        
+        Parameters
+        ----------
+        X : np.ndarray
+            Test feature matrix, shape (n_samples, n_features)
+            
+        Returns
+        -------
+        np.ndarray
+            Predicted metacluster indices, shape (n_samples,)
+            
+        Raises
+        ------
+        NotFittedError
+            If the classifier has not been fitted yet
+            
+        Examples
+        --------
+        >>> predictions = classifier.predict(X_test)
+        >>> print(predictions.shape)
+        (n_test_samples,)
+        """
         # Verify if the model is fitted or not
         if not self._fitted:
             raise NotFittedError("The classifier has not been fitted yet")
@@ -287,23 +481,75 @@ class IEMM(BaseEstimator, ClassifierMixin):
         return result
 
     def plot_tree(self,
-                  feature_names=None,
-                  class_names=None,
-                  cluster_names=None,
-                  focal_colors=None,
-                  position=(0, 0),
-                  x_spacing=4,
-                  y_spacing=4,
-                  box_width=10,
-                  box_height=2,
-                  box_scale=1,
-                  box_reduction=0.9,
-                  x_scale=1,
-                  x_reduction=0.05,
-                  fontsize=16,
-                  arrow_label=None,
-                  add_legend=True):
-
+                  feature_names: Optional[List[str]] = None,
+                  class_names: Optional[List[str]] = None,
+                  cluster_names: Optional[List[str]] = None,
+                  focal_colors: Optional[np.ndarray] = None,
+                  position: Tuple[float, float] = (0, 0),
+                  x_spacing: float = 4,
+                  y_spacing: float = 4,
+                  box_width: float = 10,
+                  box_height: float = 2,
+                  box_scale: float = 1,
+                  box_reduction: float = 0.9,
+                  x_scale: float = 1,
+                  x_reduction: float = 0.05,
+                  fontsize: int = 16,
+                  arrow_label: Optional[str] = None,
+                  add_legend: bool = True) -> schemdraw.Drawing:
+        """
+        Plot the decision tree using schemdraw.
+        
+        Parameters
+        ----------
+        feature_names : List[str], optional
+            Names of features to use in node labels
+        class_names : List[str], optional
+            Names of classes for legend
+        cluster_names : List[str], optional
+            Names of clusters for leaf node labels
+        focal_colors : np.ndarray, optional
+            Colors for focal sets, shape (n_focal_sets, 3)
+        position : Tuple[float, float], default=(0, 0)
+            Starting position for the root node
+        x_spacing : float, default=4
+            Horizontal spacing between nodes
+        y_spacing : float, default=4
+            Vertical spacing between levels
+        box_width : float, default=10
+            Width of node boxes
+        box_height : float, default=2
+            Height of node boxes
+        box_scale : float, default=1
+            Scaling factor for node boxes
+        box_reduction : float, default=0.9
+            Scale reduction for child nodes
+        x_scale : float, default=1
+            Horizontal scale factor
+        x_reduction : float, default=0.05
+            Scale reduction for child spacing
+        fontsize : int, default=16
+            Font size for node labels
+        arrow_label : str, optional
+            Label for arrows
+        add_legend : bool, default=True
+            Whether to add a legend
+            
+        Returns
+        -------
+        schemdraw.Drawing
+            The tree diagram
+            
+        Raises
+        ------
+        NotFittedError
+            If the classifier has not been fitted yet
+            
+        Examples
+        --------
+        >>> diagram = classifier.plot_tree(feature_names=['x1', 'x2'])
+        >>> diagram.save('tree.png')
+        """
         if not self._fitted:
             raise NotFittedError("The classifier has not been fitted yet")
 
@@ -327,39 +573,107 @@ class IEMM(BaseEstimator, ClassifierMixin):
         )
     
 
-    def get_path(self, feature_names=None, focalset_names=None):
+    def get_path(self, feature_names: Optional[List[str]] = None, 
+                 focalset_names: Optional[List[str]] = None) -> Union[List, Dict]:
+        """
+        Get the decision paths from root to leaves.
+        
+        Parameters
+        ----------
+        feature_names : List[str], optional
+            Names of features to use in path descriptions
+        focalset_names : List[str], optional
+            Names of focal sets for leaf labels
+            
+        Returns
+        -------
+        Union[List, Dict]
+            Decision paths as strings or dictionary mapping focal sets to paths
+            
+        Examples
+        --------
+        >>> paths = classifier.get_path(feature_names=['x1', 'x2'])
+        >>> print(paths)
+        """
         # print(feature_names)
         # print(focalset_names)
         feature_labels = (lambda x: feature_names[x]) if feature_names else (lambda x: f"Feat{x}")
         return self.root_node.get_path(feature_labels=feature_labels, focalset_names=focalset_names)
 
 class TreeNode():
+    """
+    A node in the evidential decision tree.
+    
+    This class represents a single node in the decision tree constructed by the IEMM algorithm.
+    Each node can be either an internal node (with splitting criteria) or a leaf node
+    (with final predictions).
+    
+    Parameters
+    ----------
+    mass : np.ndarray, optional
+        Mass function associated with this node
+    attribute : int, optional
+        Index of the attribute used for splitting at this node
+    attribute_value : Union[float, str], default=0
+        Threshold value for continuous attributes or category for categorical attributes
+    continuous_attribute : int, default=0
+        Type of attribute: 0=categorical, 1=continuous (<), 2=continuous (>=), 3=range
+    node_depth : int, default=0
+        Depth of this node in the tree (root is 0)
+    contained_clusters : np.ndarray, optional
+        Binary array indicating which clusters are contained in this node
+        
+    Attributes
+    ----------
+    leafs : List[TreeNode]
+        Child nodes of this node
+    is_leaf : bool
+        Whether this node is a leaf node
+    number_elements : int
+        Number of training samples that reach this node
+    impurity_value : float, optional
+        Impurity measure at this node
+    impurity_type : str, optional
+        Type of impurity measure used
+    mistakeness_cut : float
+        Mistakeness value for the split at this node
+    F : np.ndarray
+        Focal sets matrix
+    attributed_metacluster : int, optional
+        Index of the metacluster assigned to this leaf node
+        
+    Examples
+    --------
+    >>> node = TreeNode(attribute=0, attribute_value=5.0, continuous_attribute=1)
+    >>> node.is_leaf = False
+    >>> child = TreeNode()
+    >>> node.leafs.append(child)
+    """
+    
     def __init__(self, 
-                 mass = None, 
-                 attribute = None, 
-                 attribute_value = 0, 
-                 continuous_attribute = 0,
-                 node_depth = 0,
-                 contained_clusters = None):
+                 mass: Optional[np.ndarray] = None, 
+                 attribute: Optional[int] = None, 
+                 attribute_value: Union[float, str] = 0, 
+                 continuous_attribute: int = 0,
+                 node_depth: int = 0,
+                 contained_clusters: Optional[np.ndarray] = None) -> None:
         """
-        Tree node class used in the Evidential Decision Tree
-
+        Initialize a tree node.
+        
         Parameters
-        -----
-        mass : BBA
-            Mass of the node
-        attribute : int
-            indice of the attribute
-        attribute_value : float/string
-            value of the attribute (string for categorical, float for numerical)
-        continuous_attribute : int
-            0: categorical, 1: numerical and <, 2: numerical and >=.
-        number_leaf : int
-            number of elements in the leaf
-
-        Returns
-        -----
-        The instance of the class.
+        ----------
+        mass : np.ndarray, optional
+            Mass function for this node
+        attribute : int, optional
+            Index of the splitting attribute
+        attribute_value : Union[float, str], default=0
+            Value used for splitting (threshold for continuous, category for categorical)
+        continuous_attribute : int, default=0
+            Type of split: 0=categorical, 1=continuous (<), 2=continuous (>=), 3=range
+        node_depth : int, default=0
+            Depth of this node in the tree
+        contained_clusters : np.ndarray, optional
+            Binary array indicating contained clusters
         """
 
         self.leafs = []
@@ -376,7 +690,20 @@ class TreeNode():
         self.impurity_value = None
         self.impurity_type = None
     
-    def max_depth(self, depth=1):
+    def max_depth(self, depth: int = 1) -> int:
+        """
+        Calculate the maximum depth of the subtree rooted at this node.
+        
+        Parameters
+        ----------
+        depth : int, default=1
+            Current depth (used for recursion)
+            
+        Returns
+        -------
+        int
+            Maximum depth of the subtree
+        """
         maximum_depth = []
         for i in self.leafs:
             maximum_depth.append(i.max_depth(depth=depth + 1))
@@ -537,16 +864,15 @@ class TreeNode():
                 
         return diagram
 
-    def add_leaf(self, node):
+    def add_leaf(self, node: 'TreeNode') -> None:
         """
-        Add leaf to the node
+        Add a child node to this node.
 
         Parameters
-        -----
+        ----------
         node : TreeNode
-            Node
+            Child node to add
         """
-
         self.leafs.append(node)
 
     def get_path(self, past_path = [], feature_labels=None, focalset_names=None):
