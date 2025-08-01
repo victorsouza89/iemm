@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iemm"
+version = "0.1.0"
+description = "Iterative Evidential Mistakeness Minimization - Explainable Evidential Clustering"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Victor Souza", email = "victorflosouza@gmail.com"},
+]
+maintainers = [
+    {name = "Victor Souza", email = "victorflosouza@gmail.com"},
+]
+keywords = ["belief functions", "evidential decision trees", "machine learning", "uncertainty"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research", 
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9", 
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+dependencies = [
+    "numpy>=1.19.0",
+    "pandas>=1.2.0", 
+    "scikit-learn>=0.24.0",
+    "schemdraw>=0.11",
+]
+
+[project.urls]
+Homepage = "https://github.com/victorsouza89/iemm"

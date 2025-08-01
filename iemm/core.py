@@ -16,7 +16,7 @@ import schemdraw
 import schemdraw.flow as flow
 # schemdraw.theme('dark')
 
-from lib import ibelief
+from . import belief as ibelief
 
 class Loss:    
     @staticmethod
@@ -248,95 +248,29 @@ class IEMM(BaseEstimator, ClassifierMixin):
 
         return tresholds[np.argmin(losses)], np.min(losses)
 
+    
+
     def _predict(self, X, root_node):
-        """
-        predict bbas on the input.
-
-        Parameters
-        -----
-        X : ndarray
-            Input array of X
-
-        Returns
-        -----
-        result : ndarray
-            Array of normalized bba
-        """
-
-        if root_node.is_leaf:
-            return root_node.mass
-
-        for v in root_node.leafs:
-            if v.continuous_attribute == 3:
-                if X[v.attribute].astype(float) >= v.attribute_value[0] and X[v.attribute].astype(float) < v.attribute_value[1]:
-                    return self._predict(X, v)
-            else:
-                if v.continuous_attribute == 0 and X[v.attribute] == v.attribute_value:
-                    return self._predict(X, v)
-                elif v.continuous_attribute == 1 and X[v.attribute].astype(float) < v.attribute_value:
-                    return self._predict(X, v)
-                elif v.continuous_attribute == 2 and X[v.attribute].astype(float) >= v.attribute_value:
-                    return self._predict(X, v)
-        
-        print("Classification Error, Tree not complete.")
-        return None
-
-    def _predict_metacluster(self, X, root_node):
         if root_node.is_leaf:
             return root_node.contained_clusters
 
         for v in root_node.leafs:
             if v.continuous_attribute == 3:
                 if X[v.attribute].astype(float) >= v.attribute_value[0] and X[v.attribute].astype(float) < v.attribute_value[1]:
-                    return self._predict_metacluster(X, v)
+                    return self._predict(X, v)
             else:
                 if v.continuous_attribute == 0 and X[v.attribute] == v.attribute_value:
-                    return self._predict_metacluster(X, v)
+                    return self._predict(X, v)
                 elif v.continuous_attribute == 1 and X[v.attribute].astype(float) < v.attribute_value:
-                    return self._predict_metacluster(X, v)
+                    return self._predict(X, v)
                 elif v.continuous_attribute == 2 and X[v.attribute].astype(float) >= v.attribute_value:
-                    return self._predict_metacluster(X, v)
+                    return self._predict(X, v)
         
         print("Classification Error, Tree not complete.")
         return None
 
-
-
-    def predict(self, X):
-        """
-        Predict labels of input data. Can return all bbas. Criterion are :
-        "Max Credibility", "Max Plausibility" and "Max Pignistic Probability".
-
-        Parameters
-        -----
-        X : ndarray
-            Input array of X to be labeled
-        creterion : int
-            Choosen criterion for prediction, by default criterion = 1.
-            1 : "Max Plausibility", 2 : "Max Credibility", 3 : "Max Pignistic Probability".
-        return_bba : boolean
-            Type of return, predictions or both predictions and bbas, 
-            by default return_bba=False.
-
-        Returns
-        -----
-        predictions : ndarray
-        result : ndarray
-            Predictions if return_bba is False and both predictions and masses if return_bba is True
-        """
-
-        # Verify if the model is fitted or not
-        if not self._fitted:
-            raise NotFittedError("The classifier has not been fitted yet")
-
-        # Predict output bbas for X
-        result = np.zeros((X.shape[0], self.mass.shape[1]))
-        for x in range(X.shape[0]):
-            result[x] = self._predict(X[x], self.root_node)
-
-        return result
     
-    def predict_metacluster(self, X):
+    def predict(self, X):
         # Verify if the model is fitted or not
         if not self._fitted:
             raise NotFittedError("The classifier has not been fitted yet")
@@ -344,7 +278,7 @@ class IEMM(BaseEstimator, ClassifierMixin):
         # Predict output bbas for X
         result = []
         for x in range(X.shape[0]):
-            metacluster = self._predict_metacluster(X[x], self.root_node)
+            metacluster = self._predict(X[x], self.root_node)
             idx_metacluster = np.where(np.all(self.F == metacluster, axis=1))[0][0]
             result.append(idx_metacluster)
 
@@ -663,7 +597,7 @@ class TreeNode():
             strs_out = []
             for _, row in past_path_df.iterrows():
                 if row.condition == 1:
-                    strs_out.append(f"({row.attribute} \leq {row.value:.2f})")
+                    strs_out.append(f"({row.attribute} \\leq {row.value:.2f})")
                 elif row.condition == 2:
                     strs_out.append(f"({row.attribute} > {row.value:.2f})")
 
